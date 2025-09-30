@@ -17,14 +17,28 @@ class Pipeline:
         while self.data_provider.hasNext():
             arxiv_id, pdf_data = self.data_provider.next()
             text = self.pdf_converter.pdf_to_string(pdf_data)
+            metadata = self.pdf_converter.pdf_metadata(pdf_data)
             cleaned_text = self.pdf_converter.clean_string(text)
             chunks = self.pdf_converter.chunk_string(cleaned_text)
+            print("Metadata: ", metadata)
+            self.mysql_db.add_paper(
+                arxiv_id=arxiv_id,
+                text=text,
+                title=metadata.get('title'),
+                author=metadata.get('author'),
+                subject=metadata.get('subject'),
+                keywords=metadata.get('keywords'),
+                creator=metadata.get('creator'),
+                producer=metadata.get('producer'),
+                creation_date=metadata.get('creationDate'),
+                modification_date=metadata.get('modDate'),
+                trapped=metadata.get('trapped')
+            )
             print("Chunks: ", len(chunks))
             for chunk in chunks:
                 embedding = self.embedder.embed(chunk)
-                chunk_uuid = self.mysql_db.add_chunk(text=chunk, arxiv_id=arxiv_id) 
-                self.qdrant_db.add_chunk(uuid=chunk_uuid, embedding=embedding.tolist())
-                print(f"Added chunk with UUID: {chunk_uuid}")
+                self.qdrant_db.add_chunk(arxiv_id, embedding.tolist(), chunk)
+                print(f"Added chunk for: {arxiv_id}")
 
     def call(self, pdf_data, arxiv_id):
             text = self.pdf_converter.pdf_to_string(pdf_data)

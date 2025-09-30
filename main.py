@@ -15,7 +15,7 @@ def main():
     pdf_converter = FitzPdfConverter()
     embedder = Specter2Embedder()
 
-    app.run(debug=True, host='0.0.0.0', port=8000, threaded=True)
+    #app.run(debug=True, host='0.0.0.0', port=8000, threaded=True)
 
     Pipeline(mysql_db, qdrant_db, data_provider, pdf_converter, embedder).process()
 

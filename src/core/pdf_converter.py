@@ -15,3 +15,8 @@ class PdfConverter(ABC):
     def chunk_string(self, text: str) -> list[str]:
         """Chunks the cleaned text into smaller segments."""
         pass
+        
+    @abstractmethod
+    def pdf_metadata(self, pdf) -> dict:
+        """Extracts metadata from a PDF file and returns it as a dictionary."""
+        pass
