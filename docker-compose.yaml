@@ -1,0 +1,48 @@
+version: '3.9'
+
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: mysql_db
+    restart: always
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: ${MYSQL_DATABASE}
+      MYSQL_USER: ${MYSQL_USER}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+    ports:
+      - "3306:3306"
+    volumes:
+      - mysql_data:/var/lib/mysql
+
+  qdrant:
+    image: qdrant/qdrant
+    container_name: qdrant_db
+    restart: always
+    ports:
+      - "6333:6333"
+      - "6334:6334" # gRPC
+    volumes:
+      - qdrant_data:/qdrant/storage
+
+  app:
+    build: .
+    container_name: main_app
+    depends_on:
+      - mysql
+      - qdrant
+    volumes:
+      - .:/app
+    ports:
+      - "8000:8000"
+      - "5000:5000"
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: ${MYSQL_DATABASE}
+      MYSQL_USER: ${MYSQL_USER}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+    command: ["python", "main.py"]
+
+volumes:
+  mysql_data:
+  qdrant_data:
