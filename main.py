@@ -1,22 +1,25 @@
-from src.impl.simple_data_provider import SimpleDataProvider
+from src.impl.arxiv_data_provider import ArxivDataProvider
 from src.impl.fitz_pdf_converter import FitzPdfConverter
 from src.impl.specter_2_embedder import Specter2Embedder 
 from src.impl.mysql_database import MySQLDatabase
 from src.impl.qdrant_database import QdrantDatabase
 from src.impl.pipeline import Pipeline
-from api import app
+# from api import app
 import os
 
 
 def main():
+    print("Starting main.py...")
+    print("Init My")
     mysql_db = MySQLDatabase() 
     qdrant_db = QdrantDatabase()
-    data_provider = SimpleDataProvider()
+    data_provider = ArxivDataProvider(first_id="arXiv:0701.00001", last_id="arXiv:2512.99999", rate_limit_seconds=3.0)
     pdf_converter = FitzPdfConverter()
     embedder = Specter2Embedder()
 
-    #app.run(debug=True, host='0.0.0.0', port=8000, threaded=True)
+    # app.run(debug=True, host='0.0.0.0', port=8000, threaded=True)
 
+    print("Activated pipeline")
     Pipeline(mysql_db, qdrant_db, data_provider, pdf_converter, embedder).process()
 
 

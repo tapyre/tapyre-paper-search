@@ -73,20 +73,3 @@ class QdrantDatabase(Database):
             limit=top_k
         )
         return search_result
-
-
-    def delete_chunk(self, uuid: str):
-        self.client.delete(
-            collection_name=self.collection_name,
-            points_selector={"points": [uuid]}
-        )
-        return True
-
-    def get_all_uuids(self, limit: int = 10000):
-        points, _ = self.client.scroll(
-            collection_name=self.collection_name,
-            limit=limit,
-            with_vectors=False,
-            with_payload=False
-        )
-        return [point.id for point in points]
