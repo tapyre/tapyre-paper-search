@@ -15,7 +15,16 @@ class Pipeline:
 
     def process(self):    
         while self.data_provider.hasNext():
-            arxiv_id, pdf_data = self.data_provider.next()
+            result = self.data_provider.next()
+            if result is None:
+                print("Data provider returned None — no more papers or an error occurred", flush=True)
+                break
+
+            arxiv_id, pdf_data = result
+            if arxiv_id is None or pdf_data is None:
+                print("Received invalid paper result, skipping...", flush=True)
+                continue
+
             text = self.pdf_converter.pdf_to_string(pdf_data)
             metadata = self.pdf_converter.pdf_metadata(pdf_data)
             cleaned_text = self.pdf_converter.clean_string(text)

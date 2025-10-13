@@ -4,23 +4,42 @@ from src.impl.specter_2_embedder import Specter2Embedder
 from src.impl.mysql_database import MySQLDatabase
 from src.impl.qdrant_database import QdrantDatabase
 from src.impl.pipeline import Pipeline
-# from api import app
+from api import StatisticsAPI
 import os
 
 
 def main():
-    print("Starting main.py...")
-    print("Init My")
+    print("              _____                                              ")
+    print("             |_   _|_ _ _ __  _   _ _ __ ___                     ")
+    print("               | |/ _` | '_ \\| | | | '__/ _ \\                    ")
+    print("               | | (_| | |_) | |_| | | |  __/                    ")
+    print("               |_|\\__,_| .__/ \\__, |_|  \\___|                    ")
+    print("  ____                 |_|    |___/__                      _     ")
+    print(" |  _ \\ __ _ _ __   ___ _ __    / ___|  ___  __ _ _ __ ___| |__  ")
+    print(" | |_) / _` | '_ \\ / _ \\ '__|___\\___ \\ / _ \\/ _` | '__/ __| '_ \\ ")
+    print(" |  __/ (_| | |_) |  __/ | |_____|__) |  __/ (_| | | | (__| | | |")
+    print(" |_|   \\__,_| .__/ \\___|_|      |____/ \\___|\\__,_|_|  \\___|_| |_|")
+    print("            |_|                                                  ")
+    print("Starting MySQL")
     mysql_db = MySQLDatabase() 
+    print("Starting Qdrant")
     qdrant_db = QdrantDatabase()
-    data_provider = ArxivDataProvider(first_id="arXiv:0701.00001", last_id="arXiv:2512.99999", rate_limit_seconds=3.0)
-    pdf_converter = FitzPdfConverter()
+    print("Starting Embedder")
     embedder = Specter2Embedder()
 
-    # app.run(debug=True, host='0.0.0.0', port=8000, threaded=True)
+    print("Starting API")
+    api = StatisticsAPI(mysql_db, qdrant_db, embedder, port=8000)
+    api.run()
 
-    print("Activated pipeline")
-    Pipeline(mysql_db, qdrant_db, data_provider, pdf_converter, embedder).process()
+    # print("Starting Arxiv Data Provider")
+    # data_provider = ArxivDataProvider(first_id="arXiv:2405.00001", last_id="arXiv:2512.99999", rate_limit_seconds=3.0)
+    # print("Starting PDF Converter")
+    # pdf_converter = FitzPdfConverter(
+
+    # # app.run(debug=True, host='0.0.0.0', port=8000, threaded=True)
+
+    # print("Activated pipeline")
+    # Pipeline(mysql_db, qdrant_db, data_provider, pdf_converter, embedder).process()
 
 
     # while data_provider.hasNext():

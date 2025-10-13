@@ -8,7 +8,8 @@ from src.core.database import Database
 class QdrantDatabase(Database):
     def __init__(self):
         self.collection_name = os.getenv("QDRANT_COLLECTION", "chunks")
-        self.host = os.getenv("QDRANT_HOST", "qdrant_db")
+        # self.host = os.getenv("QDRANT_HOST", "qdrant_db")
+        self.host = os.getenv("QDRANT_HOST", "localhost")
         self.port = int(os.getenv("QDRANT_PORT", 6333))
         self.vector_size = int(os.getenv("VECTOR_SIZE", 768)) 
 
@@ -73,3 +74,10 @@ class QdrantDatabase(Database):
             limit=top_k
         )
         return search_result
+
+    def get_statistics(self):
+        stats = self.client.get_collection(self.collection_name)
+        return {
+            "points_count": stats.points_count,
+            "segments_count": getattr(stats, "segments_count", None),
+        }
