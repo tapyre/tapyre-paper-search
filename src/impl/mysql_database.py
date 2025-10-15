@@ -1,61 +1,65 @@
 import os
 from datetime import datetime
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker, scoped_session
 from sqlalchemy.exc import SQLAlchemyError
+
 from src.models.paper import Paper
 from src.models.base import Base
 from src.core.database import Database
-from sqlalchemy import text
+from src.impl.logger import get_logger
+
+
 class MySQLDatabase(Database):
     def __init__(self):
-        print("[MySQLDatabase] Initialisierung gestartet")
+        self.logger = get_logger(__name__)
+        self.logger.info("[MySQLDatabase] Initialization started")
 
         # user = os.getenv("MYSQL_USER")
         # password = os.getenv("MYSQL_PASSWORD")
         # host = os.getenv("MYSQL_HOST", "mysql_db")
         # database = os.getenv("MYSQL_DATABASE")
 
-        # print(f"[MySQLDatabase] Umgebungsvariablen - USER: {user}, HOST: {host}, DB: {database}")
+        # self.logger.debug("[MySQLDatabase] Env vars - USER: %s, HOST: %s, DB: %s", user, host, database)
 
         # if not all([user, password, database]):
-        #     raise ValueError("[MySQLDatabase] Fehlende Umgebungsvariablen: MYSQL_USER, MYSQL_PASSWORD, MYSQL_DATABASE")
+        #     raise ValueError("[MySQLDatabase] Missing env vars: MYSQL_USER, MYSQL_PASSWORD, MYSQL_DATABASE")
 
         # self.db_url = f"mysql+pymysql://{user}:{password}@{host}/{database}"
-        self.db_url = f"mysql+pymysql://root:root@127.0.0.1:3306/test"
-        print(f"[MySQLDatabase] Verbindungs-URL: {self.db_url}")
+        self.db_url = "mysql+pymysql://root:root@127.0.0.1:3306/test"
+        self.logger.info("[MySQLDatabase] Connection URL: %s", self.db_url)
 
         self.engine = None
         self.Session = None
 
         try:
             super().__init__()
-            print("[MySQLDatabase] Super init erfolgreich")
+            self.logger.info("[MySQLDatabase] super().__init__ successful")
         except Exception as e:
-            print(f"[MySQLDatabase] Fehler beim Aufruf von super(): {e}")
+            self.logger.exception("[MySQLDatabase] Error calling super(): %s", e)
             raise
 
         try:
-            print("[MySQLDatabase] Verbindung erfolgreich hergestellt")
+            self.logger.info("[MySQLDatabase] Connection established successfully")
         except Exception as e:
-            print(f"[MySQLDatabase] Fehler beim Herstellen der Verbindung: {e}")
+            self.logger.exception("[MySQLDatabase] Error while establishing connection: %s", e)
             raise
 
     def connect(self):
-        print("[MySQLDatabase] Verbindung zur Datenbank wird aufgebaut...")
+        self.logger.info("[MySQLDatabase] Creating engine and session...")
         self.engine = create_engine(self.db_url, echo=True)
         self.Session = scoped_session(sessionmaker(bind=self.engine))
-        print("[MySQLDatabase] Engine und Session erstellt. Erstelle Tabellen...")
+        self.logger.info("[MySQLDatabase] Engine and Session created. Creating tables...")
         Base.metadata.create_all(self.engine)
-        print("[MySQLDatabase] Tabellen erstellt")
+        self.logger.info("[MySQLDatabase] Tables created")
 
     def disconnect(self):
-        print("[MySQLDatabase] Trenne Verbindung zur Datenbank...")
+        self.logger.info("[MySQLDatabase] Disconnecting from database...")
         if self.Session:
             self.Session.remove()
         if self.engine:
             self.engine.dispose()
-        print("[MySQLDatabase] Verbindung getrennt")
+        self.logger.info("[MySQLDatabase] Disconnected")
 
     def get_session(self):
         return self.Session()
@@ -76,7 +80,7 @@ class MySQLDatabase(Database):
     ):
         session = self.get_session()
         try:
-            print(f"[MySQLDatabase] Füge Paper ein: {arxiv_id}")
+            self.logger.info("[MySQLDatabase] Inserting paper: %s", arxiv_id)
             paper = Paper(
                 arxiv_id=arxiv_id,
                 text=text,
@@ -92,11 +96,11 @@ class MySQLDatabase(Database):
             )
             session.add(paper)
             session.commit()
-            print(f"[MySQLDatabase] Paper gespeichert: {arxiv_id}")
+            self.logger.info("[MySQLDatabase] Paper saved: %s", arxiv_id)
             return arxiv_id
         except SQLAlchemyError as e:
             session.rollback()
-            print(f"[MySQLDatabase] Fehler beim Speichern des Papers: {e}")
+            self.logger.exception("[MySQLDatabase] Error saving paper %s: %s", arxiv_id, e)
             raise
         finally:
             session.close()
@@ -104,7 +108,7 @@ class MySQLDatabase(Database):
     def get_paper_by_arxiv_id(self, arxiv_id: str):
         session = self.get_session()
         try:
-            print(f"[MySQLDatabase] Suche Paper mit ID: {arxiv_id}")
+            self.logger.info("[MySQLDatabase] Fetching paper by ID: %s", arxiv_id)
             return session.query(Paper).filter_by(arxiv_id=arxiv_id).first()
         finally:
             session.close()
@@ -112,7 +116,7 @@ class MySQLDatabase(Database):
     def get_all_papers(self):
         session = self.get_session()
         try:
-            print("[MySQLDatabase] Hole alle Papers")
+            self.logger.info("[MySQLDatabase] Fetching all papers")
             return session.query(Paper).all()
         finally:
             session.close()
@@ -120,25 +124,26 @@ class MySQLDatabase(Database):
     def delete_paper(self, arxiv_id: str):
         session = self.get_session()
         try:
-            print(f"[MySQLDatabase] Lösche Paper mit ID: {arxiv_id}")
+            self.logger.info("[MySQLDatabase] Deleting paper with ID: %s", arxiv_id)
             paper = session.query(Paper).filter_by(arxiv_id=arxiv_id).first()
             if paper:
                 session.delete(paper)
                 session.commit()
-                print("[MySQLDatabase] Paper gelöscht")
+                self.logger.info("[MySQLDatabase] Paper deleted: %s", arxiv_id)
                 return True
-            print("[MySQLDatabase] Paper nicht gefunden")
+            self.logger.info("[MySQLDatabase] Paper not found: %s", arxiv_id)
             return False
         except SQLAlchemyError as e:
             session.rollback()
-            print(f"[MySQLDatabase] Fehler beim Löschen des Papers: {e}")
+            self.logger.exception("[MySQLDatabase] Error deleting paper %s: %s", arxiv_id, e)
             return False
         finally:
             session.close()
+
     def get_statistics(self):
         session = self.get_session()
         try:
-            print("[MySQLDatabase] Sammle Statistiken über die Datenbank")
+            self.logger.info("[MySQLDatabase] Gathering database statistics")
             total_papers = session.query(Paper).count()
             latest_paper = session.query(Paper).order_by(Paper.creation_date.desc()).first()
             earliest_paper = session.query(Paper).order_by(Paper.creation_date.asc()).first()
@@ -165,7 +170,7 @@ class MySQLDatabase(Database):
                 "earliest_paper_date": earliest_paper.creation_date if earliest_paper else None,
                 "database_size_mb": db_size
             }
-            print(f"[MySQLDatabase] Statistiken: {stats}")
+            self.logger.info("[MySQLDatabase] Statistics: %s", stats)
             return stats
         finally:
             session.close()

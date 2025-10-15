@@ -1,9 +1,11 @@
-# src/controllers/papers_controller.py
 from flask import Blueprint, jsonify, request
 from rank_bm25 import BM25Okapi
 import re
+import time
 
-# --- Robust tokenization: prefer NLTK, but fall back if data isn't available ---
+from src.impl.logger import get_logger
+
+
 try:
     from nltk.tokenize import word_tokenize as nltk_word_tokenize
     def safe_tokenize(text: str):
@@ -20,18 +22,13 @@ class PapersController:
     blueprint = Blueprint('papers', __name__)
 
     def __init__(self, qdrant_db, embedder, mysql_db):
-        """
-        qdrant_db: QdrantDatabase configured for the *papers* collection.
-                   Must expose get_similar(embedding_list, top_k)
-                   and return points whose payload includes at least {"arxiv_id": ...}
-        embedder : object with embed(text: str) -> 1D vector (list or numpy array)
-        mysql_db : MySQLDatabase providing get_paper_by_arxiv_id(arxiv_id) -> Paper or None
-        """
+        self.logger = get_logger(__name__)
+        self.logger.info("Initializing PapersController")
+
         self.qdrant_db = qdrant_db
         self.embedder = embedder
         self.mysql_db = mysql_db
 
-        # Register routes
         PapersController.blueprint.add_url_rule(
             '/papers/semantic',
             view_func=self.get_papers_semantic_route,
@@ -42,8 +39,8 @@ class PapersController:
             view_func=self.rerank_papers_bm25_route,
             methods=['POST']
         )
+        self.logger.info("PapersController routes registered")
 
-    # -------- Helpers --------
     @staticmethod
     def _to_list(vec):
         try:
@@ -55,7 +52,6 @@ class PapersController:
     def _paper_to_dict(paper_obj):
         if not paper_obj:
             return None
-        # Adjust attributes to match your SQLAlchemy Paper model fields
         return {
             "arxiv_id": getattr(paper_obj, "arxiv_id", None),
             "title": getattr(paper_obj, "title", None),
@@ -68,7 +64,6 @@ class PapersController:
 
     @staticmethod
     def _dedup_by_arxiv(items):
-        """Keep first occurrence per arxiv_id while preserving order."""
         seen = set()
         unique = []
         for it in items:
@@ -78,57 +73,52 @@ class PapersController:
                 unique.append(it)
         return unique
 
-    # -------- Core logic (non-route) --------
     def get_papers_semantic(self, text, limit=10):
         if not text:
             raise ValueError("Missing mandatory 'text' parameter")
         if not isinstance(limit, int) or limit <= 0:
             raise ValueError("'limit' must be a positive integer")
 
-        # Oversample to maintain 'limit' after dedup
-        top_k = max(limit * 3, limit)
+        self.logger.debug(f"[semantic] Query received len(text)={len(text)} limit={limit}")
 
-        # Embed and query Qdrant (papers collection)
+        top_k = max(limit * 3, limit)
+        t0 = time.time()
+
         embedding = self.embedder.embed(text)
         embedding_list = self._to_list(embedding)
         similar = self.qdrant_db.get_similar(embedding_list, top_k=top_k)
+        t1 = time.time()
+        self.logger.info(f"[semantic] Retrieved {len(similar)} candidates from vector DB in {(t1 - t0)*1000:.1f} ms")
 
-        # Build candidates (enrich with MySQL metadata if available)
         candidates = []
         for pt in sorted(similar, key=lambda x: x.score, reverse=True):
             payload = getattr(pt, "payload", {}) or {}
             arxiv_id = payload.get("arxiv_id") or getattr(pt, "id", None)
             paper_meta = self.mysql_db.get_paper_by_arxiv_id(arxiv_id) if arxiv_id else None
             meta = self._paper_to_dict(paper_meta) if paper_meta else {"arxiv_id": arxiv_id}
+            candidates.append({**meta, "score": float(getattr(pt, "score", 0.0))})
 
-            candidates.append({
-                **meta,
-                "score": float(getattr(pt, "score", 0.0)),
-            })
-
-        # Deduplicate by arxiv_id and cut to limit
         results = self._dedup_by_arxiv(candidates)[:limit]
+        self.logger.debug(f"[semantic] Returning {len(results)} results after dedup")
         return results
 
     def rerank_papers_bm25(self, text, limit=20):
-        """
-        1) Semantic prefilter via vector DB (oversample top_k)
-        2) BM25 re-rank using full paper text from MySQL
-        3) Deduplicate by arxiv_id and return top 'limit'
-        """
         if not text:
             raise ValueError("Missing mandatory 'text' parameter")
         if not isinstance(limit, int) or limit <= 0:
             raise ValueError("'limit' must be a positive integer")
 
-        top_k = max(limit * 3, limit)
+        self.logger.debug(f"[bm25] Rerank request len(text)={len(text)} limit={limit}")
 
-        # 1) semantic prefilter
+        top_k = max(limit * 3, limit)
+        t0 = time.time()
+
         embedding = self.embedder.embed(text)
         embedding_list = self._to_list(embedding)
         candidates = self.qdrant_db.get_similar(embedding_list, top_k=top_k)
+        t1 = time.time()
+        self.logger.info(f"[bm25] Prefilter fetched {len(candidates)} candidates in {(t1 - t0)*1000:.1f} ms")
 
-        # 2) build BM25 corpus using full paper text from MySQL
         documents = []
         paper_map = []
         for pt in candidates:
@@ -146,12 +136,12 @@ class PapersController:
             paper_map.append({
                 "arxiv_id": arxiv_id,
                 "original_score": float(getattr(pt, "score", 0.0)),
-                "title": getattr(paper_obj, "title", None) if paper_obj else None,
-                # No snippet included per request
+                "title": getattr(paper_obj, "title", None),
                 "meta": self._paper_to_dict(paper_obj),
             })
 
         if not documents:
+            self.logger.warning("[bm25] No valid documents found for rerank; returning empty list")
             return []
 
         bm25 = BM25Okapi(documents)
@@ -162,16 +152,11 @@ class PapersController:
             paper_map[i]["bm25_score"] = float(score)
 
         reranked = sorted(paper_map, key=lambda x: x.get("bm25_score", 0.0), reverse=True)
-
-        # 3) Deduplicate by arxiv_id and cut to limit
         deduped = self._dedup_by_arxiv(reranked)[:limit]
+        self.logger.debug(f"[bm25] Returning {len(deduped)} reranked results")
         return deduped
 
-    # -------- HTTP routes --------
     def get_papers_semantic_route(self):
-        """
-        Expects JSON: { "text": "...", "limit": <int, optional default 10> }
-        """
         data = request.get_json(silent=True) or {}
         text = data.get("text")
         limit = data.get("limit", 10)
@@ -179,20 +164,22 @@ class PapersController:
         try:
             limit = int(limit)
         except (TypeError, ValueError):
+            self.logger.warning("[route:semantic] Invalid 'limit' type; must be integer")
             return jsonify({"error": "limit must be an integer"}), 400
 
         try:
+            self.logger.info(f"[route:semantic] Request len(text)={len(text) if text else 0} limit={limit}")
             results = self.get_papers_semantic(text=text, limit=limit)
+            self.logger.info(f"[route:semantic] Returning {len(results)} results")
             return jsonify({"results": results})
         except ValueError as ve:
+            self.logger.warning(f"[route:semantic] 4xx: {ve}")
             return jsonify({"error": str(ve)}), 400
         except Exception as e:
+            self.logger.error("[route:semantic] 5xx unexpected error", exc_info=True)
             return jsonify({"error": "Internal server error", "details": str(e)}), 500
 
     def rerank_papers_bm25_route(self):
-        """
-        Expects JSON: { "text": "...", "limit": <int, optional default 20> }
-        """
         data = request.get_json(silent=True) or {}
         text = data.get("text")
         limit = data.get("limit", 20)
@@ -200,12 +187,17 @@ class PapersController:
         try:
             limit = int(limit)
         except (TypeError, ValueError):
+            self.logger.warning("[route:bm25] Invalid 'limit' type; must be integer")
             return jsonify({"error": "limit must be an integer"}), 400
 
         try:
+            self.logger.info(f"[route:bm25] Request len(text)={len(text) if text else 0} limit={limit}")
             results = self.rerank_papers_bm25(text=text, limit=limit)
+            self.logger.info(f"[route:bm25] Returning {len(results)} results")
             return jsonify({"results": results})
         except ValueError as ve:
+            self.logger.warning(f"[route:bm25] 4xx: {ve}")
             return jsonify({"error": str(ve)}), 400
         except Exception as e:
+            self.logger.error("[route:bm25] 5xx unexpected error", exc_info=True)
             return jsonify({"error": "Internal server error", "details": str(e)}), 500

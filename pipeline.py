@@ -4,7 +4,7 @@ from src.impl.specter_2_embedder import Specter2Embedder
 from src.impl.mysql_database import MySQLDatabase
 from src.impl.qdrant_database import QdrantDatabase
 from src.impl.pipeline import Pipeline
-from api import StatisticsAPI
+from src.impl.logger import get_logger
 import os
 
 
@@ -20,39 +20,31 @@ def main():
     print(" |  __/ (_| | |_) |  __/ | |_____|__) |  __/ (_| | | | (__| | | |")
     print(" |_|   \\__,_| .__/ \\___|_|      |____/ \\___|\\__,_|_|  \\___|_| |_|")
     print("            |_|                                                  ")
-    print("Starting MySQL")
+
+    logger = get_logger(__name__)
+
+    logger.info("Starting MySQL...")
     mysql_db = MySQLDatabase() 
-    print("Starting Qdrant")
+
+    logger.info("Starting Qdrant...")
     qdrant_db = QdrantDatabase()
-    print("Starting Embedder")
+
+    logger.info("Starting Arxiv Data Provider...")
+    data_provider = ArxivDataProvider(
+        first_id="arXiv:2405.00010",
+        last_id="arXiv:2512.99999",
+        rate_limit_seconds=3.0
+    )
+
+    logger.info("Starting PDF Converter...")
+    pdf_converter = FitzPdfConverter()
+
+    logger.info("Starting Embedder...")
     embedder = Specter2Embedder()
 
-    print("Starting API")
-    api = StatisticsAPI(mysql_db, qdrant_db, embedder, port=8000)
-    api.run()
+    logger.info("Activating pipeline...")
+    Pipeline(mysql_db, qdrant_db, data_provider, pdf_converter, embedder).process()
 
-    # print("Starting Arxiv Data Provider")
-    # data_provider = ArxivDataProvider(first_id="arXiv:2405.00001", last_id="arXiv:2512.99999", rate_limit_seconds=3.0)
-    # print("Starting PDF Converter")
-    # pdf_converter = FitzPdfConverter(
-
-    # # app.run(debug=True, host='0.0.0.0', port=8000, threaded=True)
-
-    # print("Activated pipeline")
-    # Pipeline(mysql_db, qdrant_db, data_provider, pdf_converter, embedder).process()
-
-
-    # while data_provider.hasNext():
-    #     arxiv_id, pdf_data = data_provider.next()
-    #     text = pdf_converter.pdf_to_string(pdf_data)
-    #     cleaned_text = pdf_converter.clean_string(text)
-    #     chunks = pdf_converter.chunk_string(cleaned_text)
-    #     print("Chunks: ", len(chunks))
-    #     for chunk in chunks:
-    #         embedding = embedder.embed(chunk)
-    #         chunk_uuid = mysql_db.add_chunk(text=chunk, arxiv_id=arxiv_id) 
-    #         qdrant_db.add_chunk(uuid=chunk_uuid, embedding=embedding.tolist())
-    #         print(f"Added chunk with UUID: {chunk_uuid}")
 
 if __name__ == "__main__":
     main()
