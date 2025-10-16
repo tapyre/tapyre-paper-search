@@ -12,9 +12,15 @@ services:
       - "3306:3306"
     volumes:
       - mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h localhost -u${MYSQL_USER} -p${MYSQL_PASSWORD} --silent"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
 
   qdrant:
-    image: qdrant/qdrant
+    image: qdrant/qdrant:latest
     container_name: qdrant_db
     restart: always
     ports:
@@ -22,24 +28,66 @@ services:
       - "6334:6334"
     volumes:
       - qdrant_data:/qdrant/storage
+    # Kein Healthcheck (Image hat typ. kein curl/wget). 
+    # api/pipeline warten aktiv via wait-for-it.sh.
 
-  app:
+  api:
     build: .
-    container_name: main_app
+    container_name: api_service
+    restart: always
     depends_on:
-      - mysql
-      - qdrant
-    volumes:
-      - .:/app
-    ports:
-      - "8000:8000"
-      - "5000:5000"
+      mysql:
+        condition: service_healthy
+      qdrant:
+        condition: service_started   # Healthcheck entfällt → started genügt
     environment:
-      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      # API
+      API_HOST: 0.0.0.0
+      API_PORT: 8000
+      GUNICORN_WORKERS: 3
+      GUNICORN_THREADS: 4
+      GUNICORN_TIMEOUT: 120
+      # DB / Vektorstore
+      MYSQL_HOST: mysql
+      MYSQL_PORT: 3306
       MYSQL_DATABASE: ${MYSQL_DATABASE}
       MYSQL_USER: ${MYSQL_USER}
       MYSQL_PASSWORD: ${MYSQL_PASSWORD}
-    command: ["python", "main.py"]
+      QDRANT_HOST: qdrant
+      QDRANT_HTTP_PORT: 6333
+      QDRANT_GRPC_PORT: 6334
+    ports:
+      - "8000:8000"
+    command: ["bash", "docker/entrypoints/run_api.sh"]
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8000/ | grep -q '\"status\"'"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 15s
+
+  pipeline:
+    build: .
+    container_name: pipeline_service
+    restart: on-failure
+    depends_on:
+      mysql:
+        condition: service_healthy
+      qdrant:
+        condition: service_started
+    environment:
+      MYSQL_HOST: mysql
+      MYSQL_PORT: 3306
+      MYSQL_DATABASE: ${MYSQL_DATABASE}
+      MYSQL_USER: ${MYSQL_USER}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+      QDRANT_HOST: qdrant
+      QDRANT_HTTP_PORT: 6333
+      QDRANT_GRPC_PORT: 6334
+      ARXIV_FIRST_ID: "arXiv:2405.00006"
+      ARXIV_LAST_ID: "arXiv:2512.99999"
+      ARXIV_RATE_LIMIT: "3.0"
+    command: ["bash", "docker/entrypoints/run_pipeline.sh"]
 
 volumes:
   mysql_data:
