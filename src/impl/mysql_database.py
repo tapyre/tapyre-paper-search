@@ -15,18 +15,18 @@ class MySQLDatabase(Database):
         self.logger = get_logger(__name__)
         self.logger.info("[MySQLDatabase] Initialization started")
 
-        # user = os.getenv("MYSQL_USER")
-        # password = os.getenv("MYSQL_PASSWORD")
-        # host = os.getenv("MYSQL_HOST", "mysql_db")
-        # database = os.getenv("MYSQL_DATABASE")
+        user = os.getenv("MYSQL_USER")
+        password = os.getenv("MYSQL_PASSWORD")
+        host = os.getenv("MYSQL_HOST", "mysql_db")
+        database = os.getenv("MYSQL_DATABASE")
 
-        # self.logger.debug("[MySQLDatabase] Env vars - USER: %s, HOST: %s, DB: %s", user, host, database)
+        self.logger.debug("[MySQLDatabase] Env vars - USER: %s, HOST: %s, DB: %s", user, host, database)
 
-        # if not all([user, password, database]):
-        #     raise ValueError("[MySQLDatabase] Missing env vars: MYSQL_USER, MYSQL_PASSWORD, MYSQL_DATABASE")
+        if not all([user, password, database]):
+            raise ValueError("[MySQLDatabase] Missing env vars: MYSQL_USER, MYSQL_PASSWORD, MYSQL_DATABASE")
 
-        # self.db_url = f"mysql+pymysql://{user}:{password}@{host}/{database}"
-        self.db_url = "mysql+pymysql://root:root@127.0.0.1:3306/test"
+        self.db_url = f"mysql+pymysql://{user}:{password}@{host}/{database}"
+        # self.db_url = "mysql+pymysql://root:root@127.0.0.1:3306/test"
         self.logger.info("[MySQLDatabase] Connection URL: %s", self.db_url)
 
         self.engine = None

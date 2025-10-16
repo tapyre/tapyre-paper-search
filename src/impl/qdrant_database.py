@@ -11,7 +11,7 @@ class QdrantDatabase(Database):
     def __init__(self):
         self.logger = get_logger(__name__)
         self.collection_name = os.getenv("QDRANT_COLLECTION", "chunks")
-        self.host = os.getenv("QDRANT_HOST", "localhost")
+        self.host = os.getenv("QDRANT_HOST", "qdrant_db")
         self.port = int(os.getenv("QDRANT_PORT", 6333))
         self.vector_size = int(os.getenv("VECTOR_SIZE", 768))
         self.client = None
