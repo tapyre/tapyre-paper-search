@@ -28,8 +28,6 @@ services:
       - "6334:6334"
     volumes:
       - qdrant_data:/qdrant/storage
-    # Kein Healthcheck (Image hat typ. kein curl/wget). 
-    # api/pipeline warten aktiv via wait-for-it.sh.
 
   api:
     build: .
@@ -39,15 +37,13 @@ services:
       mysql:
         condition: service_healthy
       qdrant:
-        condition: service_started   # Healthcheck entfällt → started genügt
+        condition: service_started 
     environment:
-      # API
       API_HOST: 0.0.0.0
       API_PORT: 8000
-      GUNICORN_WORKERS: 3
-      GUNICORN_THREADS: 4
+      GUNICORN_WORKERS: 1
+      GUNICORN_THREADS: 1
       GUNICORN_TIMEOUT: 120
-      # DB / Vektorstore
       MYSQL_HOST: mysql
       MYSQL_PORT: 3306
       MYSQL_DATABASE: ${MYSQL_DATABASE}
@@ -84,7 +80,7 @@ services:
       QDRANT_HOST: qdrant
       QDRANT_HTTP_PORT: 6333
       QDRANT_GRPC_PORT: 6334
-      ARXIV_FIRST_ID: "arXiv:2405.00006"
+      ARXIV_FIRST_ID: "arXiv:2405.00010"
       ARXIV_LAST_ID: "arXiv:2512.99999"
       ARXIV_RATE_LIMIT: "3.0"
     command: ["bash", "docker/entrypoints/run_pipeline.sh"]

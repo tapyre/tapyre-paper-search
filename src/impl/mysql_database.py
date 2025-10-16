@@ -76,10 +76,15 @@ class MySQLDatabase(Database):
         producer: str = None,
         creation_date: datetime = None,
         modification_date: datetime = None,
-        trapped: str = None
+        trapped: str = None,
+        skip_if_exists: bool = True,
     ):
         session = self.get_session()
         try:
+            if skip_if_exists and self.paper_exists(arxiv_id):
+                self.logger.info("[MySQLDatabase] Paper %s already exists, skipping insert.", arxiv_id)
+                return arxiv_id
+
             self.logger.info("[MySQLDatabase] Inserting paper: %s", arxiv_id)
             paper = Paper(
                 arxiv_id=arxiv_id,
@@ -97,6 +102,12 @@ class MySQLDatabase(Database):
             session.add(paper)
             session.commit()
             self.logger.info("[MySQLDatabase] Paper saved: %s", arxiv_id)
+            return arxiv_id
+
+        except IntegrityError as e:
+            # Falls zwischen Check und Insert ein anderer Prozess eingefügt hat
+            session.rollback()
+            self.logger.warning("[MySQLDatabase] IntegrityError (vermutlich Duplikat) bei %s – skippe. Detail: %s", arxiv_id, e)
             return arxiv_id
         except SQLAlchemyError as e:
             session.rollback()
@@ -172,5 +183,12 @@ class MySQLDatabase(Database):
             }
             self.logger.info("[MySQLDatabase] Statistics: %s", stats)
             return stats
+        finally:
+            session.close()
+
+    def paper_exists(self, arxiv_id: str) -> bool:
+        session = self.get_session()
+        try:
+            return session.get(Paper, arxiv_id) is not None
         finally:
             session.close()

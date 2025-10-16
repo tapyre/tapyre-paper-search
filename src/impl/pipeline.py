@@ -36,6 +36,10 @@ class Pipeline:
                                     arxiv_id, "None" if pdf_data is None else "bytes")
                 continue
 
+            if self.mysql_db.paper_exists(arxiv_id):
+                self.logger.info("Paper %s already exists – skipping entire processing.", arxiv_id)
+                continue
+
             self.logger.info("Processing paper: %s", arxiv_id)
 
             text = self.pdf_converter.pdf_to_string(pdf_data)
@@ -67,16 +71,3 @@ class Pipeline:
                     self.logger.debug("Embedded and stored %d/%d chunks for %s.", idx, len(chunks), arxiv_id)
 
         self.logger.info("Pipeline processing finished.")
-
-    def call(self, pdf_data, arxiv_id):
-        self.logger.info("Ad-hoc call for arXiv ID %s", arxiv_id)
-        text = self.pdf_converter.pdf_to_string(pdf_data)
-        cleaned_text = self.pdf_converter.clean_string(text)
-        chunks = self.pdf_converter.chunk_string(cleaned_text)
-        self.logger.info("Prepared %d chunks for %s", len(chunks), arxiv_id)
-
-        for idx, chunk in enumerate(chunks, start=1):
-            embedding = self.embedder.embed(chunk)
-            chunk_uuid = self.mysql_db.add_chunk(text=chunk, arxiv_id=arxiv_id)
-            self.qdrant_db.add_chunk(uuid=chunk_uuid, embedding=embedding.tolist())
-            self.logger.debug("Added chunk %d/%d with UUID: %s", idx, len(chunks), chunk_uuid)
