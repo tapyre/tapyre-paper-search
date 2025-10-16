@@ -1,6 +1,8 @@
 # Installation Guide
 
-![Install Guide Logo](images/logo-install-guide.png)
+<p align="center">
+    <img src="images/logo-install-guide.png" alt="Install Guide Logo" width="200" />
+</p>
 
 ---
 
@@ -8,8 +10,8 @@
 
 1. **Clone the Repository**
     ```bash
-    git clone <repository-url>
-    cd <project-directory>
+    git clone https://github.com/tapyre/tapyre-paper-search/
+    cd tapyre-paper-search
     ```
 
 2. **Build and Start Services**
