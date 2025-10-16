@@ -10,6 +10,18 @@ class Specter2Embedder(Embedder):
         self.logger = get_logger(__name__)
         self.logger.info("[Specter2Embedder] Initializing model: %s", model_name)
 
+        if torch.cuda.is_available():
+            self.device = torch.device("cuda")
+            device_name = torch.cuda.get_device_name(0)
+        elif torch.backends.mps.is_available():
+            self.device = torch.device("mps")
+            device_name = "Apple MPS (Metal)"
+        else:
+            self.device = torch.device("cpu")
+            device_name = "CPU"
+
+        self.logger.info("[Specter2Embedder] Using device: %s", device_name)
+
         try:
             self.tokenizer = AutoTokenizer.from_pretrained(model_name)
             self.model = AutoModel.from_pretrained(model_name)
