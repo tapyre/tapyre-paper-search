@@ -38,6 +38,7 @@ See the [Install Guide](./docs/install-guide.md) for setup instructions.
 ## 📖 Documentation
 
 - [Architecture Overview](./docs/architecture.md)
+- [API Overview](./docs/api.md)
 
 ---
 
