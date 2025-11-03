@@ -11,7 +11,7 @@ services:
     ports:
       - "3306:3306"
     volumes:
-      - mysql_data:/var/lib/mysql
+      - /mnt/tapyre-paper-search/mysql_data:/var/lib/mysql
     healthcheck:
       test: ["CMD-SHELL", "mysqladmin ping -h localhost -u${MYSQL_USER} -p${MYSQL_PASSWORD} --silent"]
       interval: 10s
@@ -27,7 +27,7 @@ services:
       - "6333:6333"
       - "6334:6334"
     volumes:
-      - qdrant_data:/qdrant/storage
+      - /mnt/tapyre-paper-search/qdrant_data:/qdrant/storage
 
   api:
     build: .
@@ -37,21 +37,28 @@ services:
       mysql:
         condition: service_healthy
       qdrant:
-        condition: service_started 
+        condition: service_started
     environment:
       API_HOST: 0.0.0.0
       API_PORT: 8000
       GUNICORN_WORKERS: 1
       GUNICORN_THREADS: 1
       GUNICORN_TIMEOUT: 120
+
       MYSQL_HOST: mysql
       MYSQL_PORT: 3306
       MYSQL_DATABASE: ${MYSQL_DATABASE}
       MYSQL_USER: ${MYSQL_USER}
       MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+
       QDRANT_HOST: qdrant
       QDRANT_HTTP_PORT: 6333
       QDRANT_GRPC_PORT: 6334
+
+      NVIDIA_VISIBLE_DEVICES: "all"
+      NVIDIA_DRIVER_CAPABILITIES: "compute,utility"
+      PYTORCH_CUDA_ALLOC_CONF: "expandable_segments:True"
+      HF_HUB_ENABLE_HF_TRANSFER: "0"
     ports:
       - "8000:8000"
     command: ["bash", "docker/entrypoints/run_api.sh"]
@@ -61,6 +68,10 @@ services:
       timeout: 5s
       retries: 12
       start_period: 15s
+    # <<< WICHTIG: explizit NVIDIA-Runtime setzen >>>
+    runtime: nvidia
+    gpus: all
+    shm_size: "4gb"
 
   pipeline:
     build: .
@@ -77,14 +88,20 @@ services:
       MYSQL_DATABASE: ${MYSQL_DATABASE}
       MYSQL_USER: ${MYSQL_USER}
       MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+
       QDRANT_HOST: qdrant
       QDRANT_HTTP_PORT: 6333
       QDRANT_GRPC_PORT: 6334
-      ARXIV_FIRST_ID: "arXiv:2405.00010"
+
+      ARXIV_FIRST_ID: "arXiv:0701.00000"
       ARXIV_LAST_ID: "arXiv:2512.99999"
       ARXIV_RATE_LIMIT: "3.0"
-    command: ["bash", "docker/entrypoints/run_pipeline.sh"]
 
-volumes:
-  mysql_data:
-  qdrant_data:
+      NVIDIA_VISIBLE_DEVICES: "all"
+      NVIDIA_DRIVER_CAPABILITIES: "compute,utility"
+      PYTORCH_CUDA_ALLOC_CONF: "expandable_segments:True"
+      HF_HUB_ENABLE_HF_TRANSFER: "0"
+    command: ["bash", "docker/entrypoints/run_pipeline.sh"]
+    runtime: nvidia
+    gpus: all
+    shm_size: "4gb"

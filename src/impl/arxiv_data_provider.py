@@ -6,7 +6,7 @@ import time
 
 
 class ArxivDataProvider(DataProvider):
-    def __init__(self, first_id="", last_id="", rate_limit_seconds=3.0, max_retries: int = 3):
+    def __init__(self, first_id="", last_id="", rate_limit_seconds=6.0, max_retries: int = 3):
         self.logger = get_logger(__name__)
         self.logger.info("Initializing ArxivDataProvider")
 
@@ -106,9 +106,8 @@ class ArxivDataProvider(DataProvider):
                     return b""
 
                 else:
-                    # critical condition: unexpected status
                     attempts += 1
-                    backoff = min(60, 5 * attempts)
+                    backoff = min(600, 100 * attempts)
                     self.logger.critical(
                         f"[fetch_pdf] CRITICAL: Unexpected HTTP {status} for {arxiv_id}, "
                         f"retrying in {backoff}s (attempt {attempts}/{self.max_retries})"

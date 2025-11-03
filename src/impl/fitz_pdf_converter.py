@@ -4,6 +4,8 @@ import fitz
 from datetime import datetime, timedelta, timezone
 import re
 from typing import Optional
+import unicodedata
+
 
 
 class FitzPdfConverter(PdfConverter):
@@ -94,7 +96,32 @@ class FitzPdfConverter(PdfConverter):
 
     def clean_string(self, text: str) -> str:
         before_len = len(text)
+        text = unicodedata.normalize("NFKC", text)
+
+        text = text.replace('\r\n', '\n').replace('\r', '\n')
+
+        WHITESPACE_CHARS = [
+            "\u00A0", 
+            "\u2007", 
+            "\u202F", 
+            "\u2009", 
+            "\u2002", "\u2003", "\u2004", "\u2005", "\u2006", 
+            "\u2008", "\u200A",
+            "\u3000", 
+            "\u180E", 
+            "\u200B", "\u200C", "\u200D", "\u2060", 
+        ]
+        for ch in WHITESPACE_CHARS:
+            text = text.replace(ch, ' ')
+
+        text = text.replace('–', '-')   
+        text = text.replace('—', '-')   
+        text = text.replace('−', '-')   
+        text = text.replace('­', '')    
+
         text = text.replace('\n', ' ')
+
+
         text = ' '.join(text.split())
         after_len = len(text)
         self.logger.debug("Cleaned string: length %d -> %d.", before_len, after_len)

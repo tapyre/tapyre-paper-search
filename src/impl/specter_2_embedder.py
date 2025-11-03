@@ -13,6 +13,10 @@ class Specter2Embedder(Embedder):
         if torch.cuda.is_available():
             self.device = torch.device("cuda")
             device_name = torch.cuda.get_device_name(0)
+            cap = torch.cuda.get_device_capability(0)
+            self.logger.info("[CUDA] device=%s cap=sm_%d%d torch_cuda=%s",
+                             device_name, cap[0], cap[1], torch.version.cuda)
+            torch.backends.cudnn.benchmark = True
         elif torch.backends.mps.is_available():
             self.device = torch.device("mps")
             device_name = "Apple MPS (Metal)"
@@ -23,14 +27,21 @@ class Specter2Embedder(Embedder):
         self.logger.info("[Specter2Embedder] Using device: %s", device_name)
 
         try:
+            # safetensors = sicher & umgeht torch.load-CVE
             self.tokenizer = AutoTokenizer.from_pretrained(model_name)
-            self.model = AutoModel.from_pretrained(model_name)
+            self.model = AutoModel.from_pretrained(
+                model_name,
+                use_safetensors=True,
+                trust_remote_code=False,
+            )
+            self.model.to(self.device)
             self.model.eval()
             self.logger.info("[Specter2Embedder] Model and tokenizer loaded successfully.")
         except Exception as e:
             self.logger.exception("[Specter2Embedder] Failed to load model '%s': %s", model_name, e)
             raise
 
+    @torch.inference_mode()
     def embed(self, text: Union[str, List[str]]) -> torch.Tensor:
         if isinstance(text, str):
             self.logger.debug("[Specter2Embedder] Received single string for embedding.")
@@ -43,18 +54,27 @@ class Specter2Embedder(Embedder):
                 text,
                 padding=True,
                 truncation=True,
-                return_tensors="pt"
+                return_tensors="pt",
             )
-            self.logger.debug("[Specter2Embedder] Tokenized input successfully (tokens per text: %d).",
-                              encoded_input['input_ids'].shape[1])
+            # auf Device schieben
+            encoded_input = {k: v.to(self.device, non_blocking=True) for k, v in encoded_input.items()}
 
-            with torch.no_grad():
+            self.logger.debug(
+                "[Specter2Embedder] Tokenized input successfully (seq_len=%d).",
+                int(encoded_input["input_ids"].shape[1])
+            )
+
+            if self.device.type == "cuda":
+                with torch.cuda.amp.autocast(dtype=torch.float16):
+                    model_output = self.model(**encoded_input)
+            else:
                 model_output = self.model(**encoded_input)
 
-            embeddings = model_output.last_hidden_state[:, 0, :]
-            self.logger.debug("[Specter2Embedder] Generated embeddings with shape: %s", tuple(embeddings.shape))
+            embeddings = model_output.last_hidden_state[:, 0, :]  # CLS
+            self.logger.debug("[Specter2Embedder] Generated embeddings shape: %s", tuple(embeddings.shape))
 
-            return embeddings
+            return embeddings.detach().to("cpu")
+
         except Exception as e:
             self.logger.exception("[Specter2Embedder] Error during embedding: %s", e)
             raise
