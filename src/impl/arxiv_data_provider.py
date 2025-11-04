@@ -116,7 +116,7 @@ class ArxivDataProvider(DataProvider):
 
             except requests.exceptions.RequestException as e:
                 attempts += 1
-                backoff = min(60, 5 * attempts)
+                backoff = min(600, 100 * attempts)
                 self.logger.error(
                     f"[fetch_pdf] Request exception for {arxiv_id}: {e}, "
                     f"retrying in {backoff}s (attempt {attempts}/{self.max_retries})",

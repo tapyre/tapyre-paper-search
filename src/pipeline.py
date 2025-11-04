@@ -31,9 +31,9 @@ def main():
 
     logger.info("Starting Arxiv Data Provider...")
     data_provider = ArxivDataProvider(
-        first_id="arXiv:2405.00010",
+        first_id="arXiv:2401.02950",
         last_id="arXiv:2512.99999",
-        rate_limit_seconds=3.0
+        rate_limit_seconds=6.0
     )
 
     logger.info("Starting PDF Converter...")

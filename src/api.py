@@ -4,6 +4,7 @@ from src.controllers.chunk_controller import ChunksController
 from src.controllers.paper_controller import PapersController
 from src.impl.logger import get_logger
 from flask import Flask, jsonify
+from flask_cors import CORS
 from src.impl.specter_2_embedder import Specter2Embedder
 from src.impl.mysql_database import MySQLDatabase
 from src.impl.qdrant_database import QdrantDatabase
@@ -21,6 +22,8 @@ def create_app():
     embedder = Specter2Embedder()
 
     app = Flask(__name__)
+
+    CORS(app, resources={r"/*": {"origins": "*"}}, supports_credentials=True)
 
     @app.route("/", methods=["GET"])
     def health():
@@ -41,19 +44,20 @@ def create_app():
             return jsonify({"status": "error", "details": str(e)}), 500
 
     logger.info("register StatisticsController...")
-    statistics_controller = StatisticsController(mysql_db, qdrant_db)  # noqa: F841
+    statistics_controller = StatisticsController(mysql_db, qdrant_db)
     app.register_blueprint(StatisticsController.blueprint)
 
     logger.info("register ChunksController...")
-    chunks_controller = ChunksController(qdrant_db, embedder)  # noqa: F841
+    chunks_controller = ChunksController(qdrant_db, embedder)
     app.register_blueprint(ChunksController.blueprint)
 
     logger.info("register PapersController...")
-    papers_controller = PapersController(qdrant_db, embedder, mysql_db)  # noqa: F841
+    papers_controller = PapersController(qdrant_db, embedder, mysql_db)
     app.register_blueprint(PapersController.blueprint)
 
     logger.info("All controllers registered successfully.")
     return app
+
 
 if __name__ == "__main__":
     app = create_app()

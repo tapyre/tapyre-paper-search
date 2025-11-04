@@ -57,10 +57,21 @@ class QdrantDatabase(Database):
         else:
             self.logger.warning("[QdrantDatabase] Disconnect called, but client was already None.")
 
-    def add_chunk(self, arxiv_id: str, embedding, text: str):
+    def add_chunk(
+        self,
+        arxiv_id: str,
+        embedding,
+        text: str,
+        max_retries: int = 3,
+        base_delay: float = 1.0,
+    ):
         if not arxiv_id or embedding is None or text is None:
-            self.logger.error("[QdrantDatabase] Missing required fields (arxiv_id=%s, embedding=%s, text=%s).",
-                              arxiv_id, type(embedding), "present" if text else "None")
+            self.logger.error(
+                "[QdrantDatabase] Missing required fields (arxiv_id=%s, embedding=%s, text=%s).",
+                arxiv_id,
+                type(embedding),
+                "present" if text else "None",
+            )
             raise ValueError("Both arxiv_id, embedding, and text are required.")
 
         if hasattr(embedding, "tolist"):
@@ -72,27 +83,73 @@ class QdrantDatabase(Database):
             embedding_list = embedding_list[0]
 
         pk = str(uuid.uuid4())
-        self.logger.debug("[QdrantDatabase] Adding chunk with ID %s for paper %s", pk, arxiv_id)
+        self.logger.debug(
+            "[QdrantDatabase] Adding chunk with ID %s for paper %s", pk, arxiv_id
+        )
 
         point = PointStruct(
             id=pk,
             vector=embedding_list,
             payload={
                 "arxiv_id": arxiv_id,
-                "text": text
-            }
+                "text": text,
+            },
         )
 
-        try:
-            self.client.upsert(
-                collection_name=self.collection_name,
-                points=[point]
-            )
-            self.logger.info("[QdrantDatabase] Added chunk %s for paper %s", pk, arxiv_id)
-            return pk
-        except Exception as e:
-            self.logger.exception("[QdrantDatabase] Failed to upsert chunk for paper %s: %s", arxiv_id, e)
-            raise
+        attempt = 0
+        while attempt < max_retries:
+            attempt += 1
+            try:
+                self.client.upsert(
+                    collection_name=self.collection_name,
+                    points=[point],
+                    wait=True,  
+                )
+                self.logger.info(
+                    "[QdrantDatabase] Added chunk %s for paper %s (attempt %d/%d)",
+                    pk,
+                    arxiv_id,
+                    attempt,
+                    max_retries,
+                )
+                return pk
+
+            except (
+                ResponseHandlingException,
+                httpx.RemoteProtocolError,
+                httpcore.RemoteProtocolError,
+            ) as e:
+                if attempt >= max_retries:
+                    self.logger.exception(
+                        "[QdrantDatabase] Giving up on chunk %s for paper %s after %d attempts: %s",
+                        pk,
+                        arxiv_id,
+                        attempt,
+                        e,
+                    )
+                    raise
+
+                delay = min(base_delay * (2 ** (attempt - 1)), 30.0)
+                self.logger.warning(
+                    "[QdrantDatabase] Transient error when upserting chunk %s "
+                    "for paper %s (attempt %d/%d): %s – retrying in %.1fs",
+                    pk,
+                    arxiv_id,
+                    attempt,
+                    max_retries,
+                    e,
+                    delay,
+                )
+                time.sleep(delay)
+
+            except Exception as e:
+                self.logger.exception(
+                    "[QdrantDatabase] Failed to upsert chunk %s for paper %s (no retry): %s",
+                    pk,
+                    arxiv_id,
+                    e,
+                )
+                raise
 
     def get_similar(self, embedding: list[float], top_k: int = 5):
         self.logger.debug("[QdrantDatabase] Searching for top %d similar embeddings.", top_k)

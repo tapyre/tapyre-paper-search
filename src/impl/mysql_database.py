@@ -2,7 +2,7 @@ import os
 from datetime import datetime
 from sqlalchemy import create_engine, text
 from sqlalchemy.orm import sessionmaker, scoped_session
-from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.exc import SQLAlchemyError, IntegrityError, DataError
 
 from src.models.paper import Paper
 from src.models.base import Base
@@ -26,7 +26,6 @@ class MySQLDatabase(Database):
             raise ValueError("[MySQLDatabase] Missing env vars: MYSQL_USER, MYSQL_PASSWORD, MYSQL_DATABASE")
 
         self.db_url = f"mysql+pymysql://{user}:{password}@{host}/{database}"
-        # self.db_url = "mysql+pymysql://root:root@127.0.0.1:3306/test"
         self.logger.info("[MySQLDatabase] Connection URL: %s", self.db_url)
 
         self.engine = None
@@ -47,7 +46,7 @@ class MySQLDatabase(Database):
 
     def connect(self):
         self.logger.info("[MySQLDatabase] Creating engine and session...")
-        self.engine = create_engine(self.db_url, echo=True)
+        self.engine = create_engine(self.db_url, echo=True, pool_pre_ping=True)
         self.Session = scoped_session(sessionmaker(bind=self.engine))
         self.logger.info("[MySQLDatabase] Engine and Session created. Creating tables...")
         Base.metadata.create_all(self.engine)
@@ -97,7 +96,7 @@ class MySQLDatabase(Database):
                 producer=producer,
                 creation_date=creation_date,
                 modification_date=modification_date,
-                trapped=trapped
+                trapped=trapped,
             )
             session.add(paper)
             session.commit()
@@ -105,14 +104,21 @@ class MySQLDatabase(Database):
             return arxiv_id
 
         except IntegrityError as e:
-            # Falls zwischen Check und Insert ein anderer Prozess eingefügt hat
             session.rollback()
-            self.logger.warning("[MySQLDatabase] IntegrityError (vermutlich Duplikat) bei %s – skippe. Detail: %s", arxiv_id, e)
-            return arxiv_id
+            self.logger.warning("[MySQLDatabase] IntegrityError on %s, skipping. Detail: %s", arxiv_id, e)
+            return None
+
+        except DataError as e:
+            session.rollback()
+            author_len = len(author) if author is not None else 0
+            self.logger.warning("[MySQLDatabase] DataError on %s (author_len=%d), skipping. Detail: %s", arxiv_id, author_len, e)
+            return None
+
         except SQLAlchemyError as e:
             session.rollback()
-            self.logger.exception("[MySQLDatabase] Error saving paper %s: %s", arxiv_id, e)
-            raise
+            self.logger.exception("[MySQLDatabase] Unexpected SQLAlchemyError on %s: %s", arxiv_id, e)
+            return None
+
         finally:
             session.close()
 
@@ -159,7 +165,6 @@ class MySQLDatabase(Database):
             latest_paper = session.query(Paper).order_by(Paper.creation_date.desc()).first()
             earliest_paper = session.query(Paper).order_by(Paper.creation_date.asc()).first()
 
-            # Use DB name from the engine URL (or fall back to env var)
             db_name = (self.engine.url.database if self.engine else None) or os.getenv("MYSQL_DATABASE")
 
             db_size = None
@@ -171,7 +176,7 @@ class MySQLDatabase(Database):
                             FROM information_schema.tables
                             WHERE table_schema = :db
                         """),
-                        {"db": db_name}
+                        {"db": db_name},
                     )
                     db_size = result.scalar_one_or_none()
 
@@ -179,7 +184,7 @@ class MySQLDatabase(Database):
                 "total_papers": total_papers,
                 "latest_paper_date": latest_paper.creation_date if latest_paper else None,
                 "earliest_paper_date": earliest_paper.creation_date if earliest_paper else None,
-                "database_size_mb": db_size
+                "database_size_mb": db_size,
             }
             self.logger.info("[MySQLDatabase] Statistics: %s", stats)
             return stats
