@@ -62,6 +62,35 @@ class PapersController:
             "modification_date": getattr(paper_obj, "modification_date", None),
         }
 
+    def _get_matching_chunks_semantic(self, chunk_pts, query_embedding, top_k=5):
+        if not chunk_pts:
+            return []
+        scored_chunks = []
+        for pt in chunk_pts:
+            payload = getattr(pt, "payload", {}) or {}
+            scored_chunks.append({
+                "chunk_id": payload.get("id", getattr(pt, "id", None)),
+                "text": payload.get("text", None),
+                "score": float(getattr(pt, "score", 0.0))
+            })
+        return sorted(scored_chunks, key=lambda x: x["score"], reverse=True)[:top_k]
+
+    def _get_matching_chunks_bm25(self, chunk_objs, query_text, top_k=5):
+        if not chunk_objs:
+            return []
+        documents = [safe_tokenize(getattr(chunk, "text", "").lower()) for chunk in chunk_objs]
+        bm25 = BM25Okapi(documents)
+        tokenized_query = safe_tokenize(query_text.lower())
+        scores = bm25.get_scores(tokenized_query)
+        scored_chunks = []
+        for i, chunk in enumerate(chunk_objs):
+            scored_chunks.append({
+                "chunk_id": getattr(chunk, "id", None),
+                "text": getattr(chunk, "text", None),
+                "score": float(scores[i])
+            })
+        return sorted(scored_chunks, key=lambda x: x["score"], reverse=True)[:top_k]
+
     @staticmethod
     def _dedup_by_arxiv(items):
         seen = set()
@@ -90,15 +119,24 @@ class PapersController:
         t1 = time.time()
         self.logger.info(f"[semantic] Retrieved {len(similar)} candidates from vector DB in {(t1 - t0)*1000:.1f} ms")
 
-        candidates = []
-        for pt in sorted(similar, key=lambda x: x.score, reverse=True):
+        paper_chunks = {}
+        for pt in similar:
             payload = getattr(pt, "payload", {}) or {}
             arxiv_id = payload.get("arxiv_id") or getattr(pt, "id", None)
+            if not arxiv_id:
+                continue
+            paper_chunks.setdefault(arxiv_id, []).append(pt)
+
+        candidates = []
+        for arxiv_id, chunk_pts in paper_chunks.items():
             paper_meta = self.mysql_db.get_paper_by_arxiv_id(arxiv_id) if arxiv_id else None
             meta = self._paper_to_dict(paper_meta) if paper_meta else {"arxiv_id": arxiv_id}
-            candidates.append({**meta, "score": float(getattr(pt, "score", 0.0))})
+            matching_chunks = self._get_matching_chunks_semantic(chunk_pts, embedding_list, top_k=5)
+            # Use the highest chunk score as the paper score
+            paper_score = max((c["score"] for c in matching_chunks), default=0.0)
+            candidates.append({**meta, "score": paper_score, "matching_chunks": matching_chunks})
 
-        results = self._dedup_by_arxiv(candidates)[:limit]
+        results = self._dedup_by_arxiv(sorted(candidates, key=lambda x: x["score"], reverse=True))[:limit]
         self.logger.debug(f"[semantic] Returning {len(results)} results after dedup")
         return results
 
@@ -119,37 +157,36 @@ class PapersController:
         t1 = time.time()
         self.logger.info(f"[bm25] Prefilter fetched {len(candidates)} candidates in {(t1 - t0)*1000:.1f} ms")
 
-        documents = []
-        paper_map = []
+        paper_chunks = {}
         for pt in candidates:
             payload = getattr(pt, "payload", {}) or {}
             arxiv_id = payload.get("arxiv_id") or getattr(pt, "id", None)
             if not arxiv_id:
                 continue
+            paper_chunks.setdefault(arxiv_id, []).append(pt)
 
-            paper_obj = self.mysql_db.get_paper_by_arxiv_id(arxiv_id)
-            full_text = getattr(paper_obj, "text", None) if paper_obj else None
-            if not full_text:
-                continue
-
-            documents.append(safe_tokenize(full_text.lower()))
+        paper_map = []
+        for arxiv_id, chunk_pts in paper_chunks.items():
+            paper_obj = self.mysql_db.get_paper_by_arxiv_id(arxiv_id) if arxiv_id else None
+            meta = self._paper_to_dict(paper_obj)
+            chunk_objs = []
+            for pt in chunk_pts:
+                payload = getattr(pt, "payload", {}) or {}
+                class Chunk:
+                    pass
+                chunk = Chunk()
+                setattr(chunk, "id", payload.get("id", getattr(pt, "id", None)))
+                setattr(chunk, "text", payload.get("text", None))
+                chunk_objs.append(chunk)
+            matching_chunks = self._get_matching_chunks_bm25(chunk_objs, text, top_k=5)
+            paper_score = max((c["score"] for c in matching_chunks), default=0.0)
             paper_map.append({
                 "arxiv_id": arxiv_id,
-                "original_score": float(getattr(pt, "score", 0.0)),
+                "bm25_score": paper_score,
                 "title": getattr(paper_obj, "title", None),
-                "meta": self._paper_to_dict(paper_obj),
+                "meta": meta,
+                "matching_chunks": matching_chunks
             })
-
-        if not documents:
-            self.logger.warning("[bm25] No valid documents found for rerank; returning empty list")
-            return []
-
-        bm25 = BM25Okapi(documents)
-        tokenized_query = safe_tokenize(text.lower())
-        bm25_scores = bm25.get_scores(tokenized_query)
-
-        for i, score in enumerate(bm25_scores):
-            paper_map[i]["bm25_score"] = float(score)
 
         reranked = sorted(paper_map, key=lambda x: x.get("bm25_score", 0.0), reverse=True)
         deduped = self._dedup_by_arxiv(reranked)[:limit]

@@ -17,8 +17,8 @@ COPY . .
 
 RUN useradd -m -u 1000 appuser
 
-RUN mkdir -p /app/logs \
- && chown -R appuser:appuser /app/logs
+RUN mkdir -p /app/logs /app/state \
+ && chown -R appuser:appuser /app/logs /app/state
 
 RUN sed -i 's/\r$//' docker/entrypoints/run_api.sh \
  && sed -i 's/\r$//' docker/entrypoints/run_pipeline.sh \

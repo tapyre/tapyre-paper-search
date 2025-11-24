@@ -14,7 +14,7 @@ class Paper(Base):
 
     ## Metadata fields  
     title = Column(String(255), nullable=True)
-    author = Column(String(255), nullable=True)
+    author = Column(Text, nullable=True)
     subject = Column(String(255), nullable=True)
     keywords = Column(Text, nullable=True)
     creator = Column(String(255), nullable=True)
