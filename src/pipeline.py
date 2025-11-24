@@ -31,8 +31,8 @@ def main():
 
     logger.info("Starting Arxiv Data Provider...")
     data_provider = ArxivDataProvider(
-        first_id="arXiv:2401.02950",
-        last_id="arXiv:2512.99999",
+        first_id=os.getenv("ARXIV_FIRST_ID"),
+        last_id=os.getenv("ARXIV_LAST_ID"),
         rate_limit_seconds=6.0
     )
 

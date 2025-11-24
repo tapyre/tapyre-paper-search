@@ -7,7 +7,6 @@ from typing import Optional
 import unicodedata
 
 
-
 class FitzPdfConverter(PdfConverter):
     def __init__(self):
         self.logger = get_logger(__name__)
@@ -24,24 +23,47 @@ class FitzPdfConverter(PdfConverter):
             raise ValueError("Input must be a file path or PDF binary content")
 
         doc = None
+        full_text = ""
+        error_pages = 0
+
         try:
             if isinstance(pdf, str):
                 doc = fitz.open(pdf)
             else:
                 doc = fitz.open(stream=pdf, filetype="pdf")
 
-            self.logger.debug("PDF opened successfully. Page count: %d", len(doc))
-            full_text = ""
-            for i, page in enumerate(doc, start=1):
-                text = page.get_text()
-                full_text += text
-                if i % 10 == 0 or i == len(doc):
-                    self.logger.debug("Extracted text up to page %d/%d (current chunk length=%d).",
-                                      i, len(doc), len(text))
+            page_count = len(doc)
+            self.logger.debug("PDF opened successfully. Page count: %d", page_count)
 
-            self.logger.info("Finished extracting text from PDF. Total length: %d characters.",
-                             len(full_text))
+            for i, page in enumerate(doc, start=1):
+                try:
+                    text = page.get_text()
+                    full_text += text
+                    if i % 10 == 0 or i == page_count:
+                        self.logger.debug(
+                            "Extracted text up to page %d/%d (current page length=%d).",
+                            i, page_count, len(text)
+                        )
+                except Exception as e:
+                    error_pages += 1
+                    self.logger.error(
+                        "Failed to extract text from page %d/%d: %s – skipping this page.",
+                        i, page_count, e
+                    )
+                    continue
+
+            if error_pages > 0:
+                self.logger.warning(
+                    "Text extraction finished with %d page errors (total pages=%d).",
+                    error_pages, page_count
+                )
+
+            self.logger.info(
+                "Finished extracting text from PDF. Total length: %d characters.",
+                len(full_text)
+            )
             return full_text
+
         finally:
             if doc is not None:
                 doc.close()
@@ -59,10 +81,16 @@ class FitzPdfConverter(PdfConverter):
 
         doc = None
         try:
-            if isinstance(pdf, str):
-                doc = fitz.open(pdf)
-            else:
-                doc = fitz.open(stream=pdf, filetype="pdf")
+            try:
+                if isinstance(pdf, str):
+                    doc = fitz.open(pdf)
+                else:
+                    doc = fitz.open(stream=pdf, filetype="pdf")
+            except Exception as e:
+                self.logger.error(
+                    "Failed to open PDF for metadata extraction: %s", e, exc_info=True
+                )
+                return {}
 
             metadata = doc.metadata or {}
             self.logger.debug("Raw metadata keys: %s", list(metadata.keys()))
@@ -89,6 +117,7 @@ class FitzPdfConverter(PdfConverter):
 
             self.logger.info("Metadata extracted successfully.")
             return complete_metadata
+
         finally:
             if doc is not None:
                 doc.close()
@@ -101,26 +130,25 @@ class FitzPdfConverter(PdfConverter):
         text = text.replace('\r\n', '\n').replace('\r', '\n')
 
         WHITESPACE_CHARS = [
-            "\u00A0", 
-            "\u2007", 
-            "\u202F", 
-            "\u2009", 
-            "\u2002", "\u2003", "\u2004", "\u2005", "\u2006", 
+            "\u00A0",
+            "\u2007",
+            "\u202F",
+            "\u2009",
+            "\u2002", "\u2003", "\u2004", "\u2005", "\u2006",
             "\u2008", "\u200A",
-            "\u3000", 
-            "\u180E", 
-            "\u200B", "\u200C", "\u200D", "\u2060", 
+            "\u3000",
+            "\u180E",
+            "\u200B", "\u200C", "\u200D", "\u2060",
         ]
         for ch in WHITESPACE_CHARS:
             text = text.replace(ch, ' ')
 
-        text = text.replace('–', '-')   
-        text = text.replace('—', '-')   
-        text = text.replace('−', '-')   
-        text = text.replace('­', '')    
+        text = text.replace('–', '-')
+        text = text.replace('—', '-')
+        text = text.replace('−', '-')
+        text = text.replace('­', '')
 
         text = text.replace('\n', ' ')
-
 
         text = ' '.join(text.split())
         after_len = len(text)

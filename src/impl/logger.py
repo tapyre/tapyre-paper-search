@@ -22,7 +22,8 @@ def get_logger(name: str = "app"):
     console_handler.setFormatter(logging.Formatter(log_format, date_format))
 
     logger = logging.getLogger(name)
-    logger.setLevel(logging.INFO)
+    level = os.getenv("LOG_LEVEL", "INFO").upper()
+    logger.setLevel(getattr(logging, level, logging.INFO))
     logger.addHandler(file_handler)
     logger.addHandler(console_handler)
     logger.propagate = False

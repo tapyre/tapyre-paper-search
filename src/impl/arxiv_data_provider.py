@@ -1,12 +1,22 @@
+import os
+import re
+import time
+import json
+import requests
+from pathlib import Path
+
 from src.core.data_provider import DataProvider
 from src.impl.logger import get_logger
-import re
-import requests
-import time
 
 
 class ArxivDataProvider(DataProvider):
-    def __init__(self, first_id="", last_id="", rate_limit_seconds=6.0, max_retries: int = 3):
+    def __init__(
+        self,
+        first_id: str = "",
+        last_id: str = "",
+        rate_limit_seconds: float = 3.0,
+        max_retries: int = 3,
+    ):
         self.logger = get_logger(__name__)
         self.logger.info("Initializing ArxivDataProvider")
 
@@ -18,7 +28,72 @@ class ArxivDataProvider(DataProvider):
         self.rate_limit_seconds = rate_limit_seconds
         self.max_retries = max_retries
 
-    def hasNext(self):
+        # State-Dateipfad aus ENV oder Default
+        state_path = os.getenv("ARXIV_STATE_FILE", "/app/state/arxiv_state.json")
+        self.state_file = Path(state_path)
+
+        # Ordner sicherstellen (für den Fall, dass Volume leer ist)
+        self.state_file.parent.mkdir(parents=True, exist_ok=True)
+
+        # Falls vorhanden: letzten Stand laden
+        self._load_state()
+
+    # ------------------------------------------------------------------
+    # State Handling
+    # ------------------------------------------------------------------
+    def _load_state(self) -> None:
+        if not self.state_file.exists():
+            self.logger.info("[state] No state file found, starting from first_id.")
+            return
+
+        try:
+            with self.state_file.open("r", encoding="utf-8") as f:
+                state = json.load(f)
+
+            saved_current = state.get("current_id")
+            saved_finished = state.get("finished", False)
+
+            if saved_current:
+                self.logger.info(
+                    f"[state] Restoring state from {self.state_file}: "
+                    f"current_id={saved_current}, finished={saved_finished}"
+                )
+                self.current_id = saved_current
+                self.finished = saved_finished
+        except Exception as e:
+            self.logger.error(f"[state] Failed to load state file: {e}", exc_info=True)
+
+    def _save_state(self) -> None:
+        tmp_file = self.state_file.with_suffix(".tmp")
+        data = {
+            "current_id": self.current_id,
+            "first_id": self.first_id,
+            "last_id": self.last_id,
+            "finished": self.finished,
+            "last_pull": self.last_pull,
+        }
+
+        try:
+            with tmp_file.open("w", encoding="utf-8") as f:
+                json.dump(data, f)
+
+            # atomarer Replace
+            os.replace(tmp_file, self.state_file)
+            self.logger.debug(
+                f"[state] Saved state: current_id={self.current_id}, finished={self.finished}"
+            )
+        except Exception as e:
+            self.logger.error(f"[state] Failed to save state: {e}", exc_info=True)
+            if tmp_file.exists():
+                try:
+                    tmp_file.unlink()
+                except OSError:
+                    pass
+
+    # ------------------------------------------------------------------
+    # Public API
+    # ------------------------------------------------------------------
+    def hasNext(self) -> bool:
         self.logger.debug(f"[hasNext] Current ID: {self.current_id}, finished={self.finished}")
         return not self.finished
 
@@ -35,44 +110,57 @@ class ArxivDataProvider(DataProvider):
             if next_id == self.last_id or next_id is None:
                 self.logger.info("[next] Reached last ID or invalid next ID — marking finished.")
                 self.finished = True
+                self._save_state()
                 return None
 
             self.current_id = next_id
             pdf_data = self._fetch_pdf(next_id)
 
             if pdf_data and len(pdf_data) > 0:
-                self.logger.info(f"[next] Successfully fetched PDF for {next_id} ({len(pdf_data)} bytes)")
+                self.logger.info(
+                    f"[next] Successfully fetched PDF for {next_id} ({len(pdf_data)} bytes)"
+                )
+                # nach erfolgreichem Download Fortschritt speichern
+                self._save_state()
                 break
 
             self.logger.warning(f"[next] No valid PDF found for {next_id}, continuing...")
+
         return next_id, pdf_data
 
-    def _get_next_id(self, current_id):
-        """Increment arXiv ID in YYMM.NNNNN format."""
+    # ------------------------------------------------------------------
+    # ID-Handling
+    # ------------------------------------------------------------------
+    def _get_next_id(self, current_id: str) -> str | None:
+        """Increment arXiv ID and force rollover at 10000."""
         match = re.match(r'arXiv:(\d{2})(\d{2})\.(\d{4,5})(?:v\d+)?', current_id)
         if not match:
             self.logger.warning(f"[get_next_id] Invalid current ID format: {current_id}")
             return None
 
         yy, mm, num = map(int, match.groups())
-        num_digits = 4 if yy < 15 or (yy == 14 and mm <= 12) else 5
-        max_num = 9999 if num_digits == 4 else 99999
 
+        ROLLOVER_LIMIT = 10000
         num += 1
-        if num > max_num:
-            num = 1
+
+        if num >= ROLLOVER_LIMIT:
+            num = 0
             mm += 1
             if mm > 12:
                 mm = 1
                 yy += 1
+
+            # Hard Limit / Sicherheitsgrenze
             if yy > 99 or (yy == 7 and mm < 4):
                 return None
-            num_digits = 4 if yy < 15 or (yy == 14 and mm <= 12) else 5
 
-        next_id = f'arXiv:{yy:02d}{mm:02d}.{num:0{num_digits}d}'
+        next_id = f'arXiv:{yy:02d}{mm:02d}.{num:05d}'
         return next_id
 
-    def _fetch_pdf(self, paper_id):
+    # ------------------------------------------------------------------
+    # PDF-Fetching
+    # ------------------------------------------------------------------
+    def _fetch_pdf(self, paper_id: str) -> bytes:
         """Download PDF from arXiv with retries and rate limiting."""
         attempts = 0
         while attempts < self.max_retries:
@@ -91,23 +179,28 @@ class ArxivDataProvider(DataProvider):
 
             arxiv_id = match.group(1)
             url = f"https://arxiv.org/pdf/{arxiv_id}.pdf"
-            self.logger.info(f"[fetch_pdf] Fetching PDF from {url} (attempt {attempts+1}/{self.max_retries})")
+            self.logger.info(
+                f"[fetch_pdf] Fetching PDF from {url} (attempt {attempts+1}/{self.max_retries})"
+            )
 
             try:
                 response = requests.get(url, timeout=10)
                 status = response.status_code
 
                 if status == 200:
-                    self.logger.debug(f"[fetch_pdf] 200 OK for {arxiv_id} ({len(response.content)} bytes)")
+                    self.logger.debug(
+                        f"[fetch_pdf] 200 OK for {arxiv_id} ({len(response.content)} bytes)"
+                    )
                     return response.content
 
                 elif status == 404:
                     self.logger.warning(f"[fetch_pdf] 404 Not Found for {arxiv_id}")
+                    # Kein Sleep-Overkill, einfach zurück und nächste ID
                     return b""
 
                 else:
                     attempts += 1
-                    backoff = min(600, 100 * attempts)
+                    backoff = 5 * 60 * 60
                     self.logger.critical(
                         f"[fetch_pdf] CRITICAL: Unexpected HTTP {status} for {arxiv_id}, "
                         f"retrying in {backoff}s (attempt {attempts}/{self.max_retries})"

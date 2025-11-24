@@ -53,10 +53,9 @@ class Specter2Embedder(Embedder):
             encoded_input = self.tokenizer(
                 text,
                 padding=True,
-                truncation=True,
+                truncation=False,
                 return_tensors="pt",
             )
-            # auf Device schieben
             encoded_input = {k: v.to(self.device, non_blocking=True) for k, v in encoded_input.items()}
 
             self.logger.debug(
@@ -65,10 +64,11 @@ class Specter2Embedder(Embedder):
             )
 
             if self.device.type == "cuda":
-                with torch.cuda.amp.autocast(dtype=torch.float16):
+                with torch.amp.autocast(device_type="cuda", dtype=torch.float16):
                     model_output = self.model(**encoded_input)
             else:
                 model_output = self.model(**encoded_input)
+
 
             embeddings = model_output.last_hidden_state[:, 0, :]  # CLS
             self.logger.debug("[Specter2Embedder] Generated embeddings shape: %s", tuple(embeddings.shape))

@@ -15,11 +15,14 @@ RUN pip install -r requirements.txt && pip install gunicorn
 
 COPY . .
 
+# User anlegen
 RUN useradd -m -u 1000 appuser
 
-RUN mkdir -p /app/logs \
- && chown -R appuser:appuser /app/logs
+# Logs- UND State-Verzeichnis anlegen und auf appuser setzen
+RUN mkdir -p /app/logs /app/state \
+ && chown -R appuser:appuser /app/logs /app/state
 
+# Line-Endings fixen & Entrypoints ausführbar machen
 RUN sed -i 's/\r$//' docker/entrypoints/run_api.sh \
  && sed -i 's/\r$//' docker/entrypoints/run_pipeline.sh \
  && chmod +x docker/entrypoints/run_api.sh docker/entrypoints/run_pipeline.sh

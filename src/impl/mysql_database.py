@@ -46,7 +46,7 @@ class MySQLDatabase(Database):
 
     def connect(self):
         self.logger.info("[MySQLDatabase] Creating engine and session...")
-        self.engine = create_engine(self.db_url, echo=True, pool_pre_ping=True)
+        self.engine = create_engine(self.db_url, echo=False, pool_pre_ping=True)
         self.Session = scoped_session(sessionmaker(bind=self.engine))
         self.logger.info("[MySQLDatabase] Engine and Session created. Creating tables...")
         Base.metadata.create_all(self.engine)
