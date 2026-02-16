@@ -1,0 +1,21 @@
+[project]
+name = "tapyre-paper-search"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "cryptography>=46.0.1",
+    "dotenv>=0.9.9",
+    "flask>=3.1.2",
+    "nltk>=3.9.2",
+    "peft>=0.17.1",
+    "pymupdf>=1.26.4",
+    "pymysql>=1.1.2",
+    "qdrant-client>=1.15.1",
+    "rank-bm25>=0.2.2",
+    "sentence-transformers>=5.1.1",
+    "sqlalchemy>=2.0.43",
+    "torch>=2.8.0",
+    "transformers>=4.56.2",
+]
