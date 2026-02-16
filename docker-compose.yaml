@@ -1,20 +1,51 @@
 version: "3.9"
 
+# --------------------------------------------------------------------
+# Docker Compose stack for:
+# - MySQL   (relational storage for papers + metadata)
+# - Qdrant  (vector storage for chunk embeddings)
+# - API     (serves requests; reads MySQL + Qdrant)
+# - Pipeline (ingests arXiv PDFs -> text -> chunks -> embeddings -> stores)
+#
+# Key operational intent of this file:
+# - MySQL and Qdrant are bound to localhost only for host-side safety
+# - API is exposed on :8000 for client access
+# - Pipeline runs with GPU support enabled (NVIDIA runtime)
+# - Pipeline progress is persisted via a named volume (/app/state)
+# --------------------------------------------------------------------
+
 services:
   mysql:
+    # MySQL 8.0 database container (relational storage)
     image: mysql:8.0
     container_name: mysql_db
     restart: always
+
     environment:
+      # Root password required for MySQL image initialization
       MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+
+      # DB schema created automatically on first startup
       MYSQL_DATABASE: ${MYSQL_DATABASE}
+
+      # Application user created automatically on first startup
       MYSQL_USER: ${MYSQL_USER}
       MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+
     ports:
+      # Bind MySQL only to 127.0.0.1:
+      # - Not reachable from the network, only from the host machine itself.
+      # - Internal containers still access MySQL via service name "mysql".
       - "127.0.0.1:3306:3306"
+
     volumes:
+      # Persist MySQL data on the host filesystem
+      # (so DB survives container restarts/recreates)
       - /mnt/tapyre-paper-search/mysql_data:/var/lib/mysql
+
     healthcheck:
+      # Signal "healthy" only once MySQL responds to a ping command.
+      # This allows the API/pipeline to wait until MySQL is ready.
       test: ["CMD-SHELL", "mysqladmin ping -h localhost -u${MYSQL_USER} -p${MYSQL_PASSWORD} --silent"]
       interval: 10s
       timeout: 5s
@@ -22,189 +53,167 @@ services:
       start_period: 20s
 
   qdrant:
+    # Qdrant vector database container (embedding storage)
     image: qdrant/qdrant:latest
     container_name: qdrant_db
     restart: always
+
+    # Hard memory cap helps prevent uncontrolled RAM growth
     mem_limit: 8g
+
     ports:
+      # Bind Qdrant only to localhost on the host machine for safety.
+      # Port meanings:
+      # - 6333: HTTP API
+      # - 6334: gRPC API
       - "127.0.0.1:6333:6333"
       - "127.0.0.1:6334:6334"
+
     volumes:
+      # Persist Qdrant storage to the host filesystem
       - /mnt/tapyre-paper-search/qdrant_data:/qdrant/storage
+
     environment:
+      # Reduce Qdrant log verbosity (useful in production)
       QDRANT__LOG_LEVEL: ERROR
 
   api:
+    # API service container (built from local Dockerfile)
     build: .
     container_name: api_service
     restart: always
+
     depends_on:
+      # Wait until MySQL is actually ready (healthcheck passes)
       mysql:
         condition: service_healthy
+
+      # Qdrant has no healthcheck here, so we only wait for container start
       qdrant:
         condition: service_started
+
     environment:
+      # Application log level (used by your get_logger())
       LOG_LEVEL: ERROR
+
+      # API binds to all interfaces inside the container
       API_HOST: 0.0.0.0
       API_PORT: 8000
+
+      # Gunicorn config controlling concurrency and request timeout
       GUNICORN_WORKERS: 1
       GUNICORN_THREADS: 1
       GUNICORN_TIMEOUT: 120
 
+      # MySQL connectivity from inside the Docker network
       MYSQL_HOST: mysql
       MYSQL_PORT: 3306
       MYSQL_DATABASE: ${MYSQL_DATABASE}
       MYSQL_USER: ${MYSQL_USER}
       MYSQL_PASSWORD: ${MYSQL_PASSWORD}
 
+      # Qdrant connectivity from inside the Docker network
+      # NOTE:
+      # - Your Python QdrantDatabase reads QDRANT_PORT, not QDRANT_HTTP_PORT.
+      # - If you keep QDRANT_HTTP_PORT here, your code must read it accordingly.
       QDRANT_HOST: qdrant
       QDRANT_HTTP_PORT: 6333
       QDRANT_GRPC_PORT: 6334
 
-      NVIDIA_VISIBLE_DEVICES: "all"
-      NVIDIA_DRIVER_CAPABILITIES: "compute,utility"
-      PYTORCH_CUDA_ALLOC_CONF: "expandable_segments:True"
+      # Explicitly disable GPU usage for the API container.
+      # This prevents accidental GPU contention with the pipeline.
+      NVIDIA_VISIBLE_DEVICES: ""
+
+      # Optional application-level switch (your code must implement this)
+      USE_GPU: "0"
+
+      # HuggingFace transfer acceleration toggle (stability over speed)
       HF_HUB_ENABLE_HF_TRANSFER: "0"
+
     ports:
+      # Expose API on the host (publicly accessible depending on host firewall)
       - "8000:8000"
+
     command: ["bash", "docker/entrypoints/run_api.sh"]
+
     healthcheck:
+      # Healthcheck expects API root endpoint to output JSON containing "status"
       test: ["CMD-SHELL", "curl -fsS http://localhost:8000/ | grep -q '\"status\"'"]
       interval: 10s
       timeout: 5s
       retries: 12
       start_period: 15s
-    runtime: nvidia
-    gpus: all
+
+    # Shared memory helps PyTorch/transformers and some tokenizers
     shm_size: "4gb"
 
   pipeline:
+    # Pipeline container (responsible for ingestion + embedding generation)
     build: .
     container_name: pipeline_service
+
+    # Restart only if the job fails (typical worker behavior)
     restart: on-failure
+
     depends_on:
       mysql:
         condition: service_healthy
       qdrant:
         condition: service_started
+
     environment:
-      LOG_LEVEL: ERROR
-      MYSQL_HOST: mysql
-      MYSQL_PORT: 3306
+      # Pipeline log level (string quoted to avoid YAML type issues)
+      LOG_LEVEL: "ERROR"
+
+      # MySQL connection inside Docker network
+      MYSQL_HOST: "mysql"
+      MYSQL_PORT: "3306"
       MYSQL_DATABASE: ${MYSQL_DATABASE}
       MYSQL_USER: ${MYSQL_USER}
       MYSQL_PASSWORD: ${MYSQL_PASSWORD}
 
-      QDRANT_HOST: qdrant
-      QDRANT_HTTP_PORT: 6333
-      QDRANT_GRPC_PORT: 6334
+      # PyTorch CUDA allocator tuning:
+      # - max_split_size_mb reduces fragmentation by limiting block split size
+      # - garbage_collection_threshold influences cache reclamation behavior
+      PYTORCH_CUDA_ALLOC_CONF: "max_split_size_mb:128,garbage_collection_threshold:0.8"
 
+      # Custom knob (your code must implement it):
+      # e.g., periodically clear CUDA cache every N papers
+      CUDA_CACHE_CLEAR_EVERY: "1"
+
+      # Qdrant connectivity inside Docker network
+      QDRANT_HOST: "qdrant"
+      QDRANT_HTTP_PORT: "6333"
+      QDRANT_GRPC_PORT: "6334"
+
+      # arXiv ingestion range + throttling
       ARXIV_FIRST_ID: "arXiv:0701.00000"
       ARXIV_LAST_ID: "arXiv:2512.99999"
       ARXIV_RATE_LIMIT: "3.0"
+
+      # State file for resumable ingestion (must be on a volume)
       ARXIV_STATE_FILE: "/app/state/arxiv_state.json"
 
+      # GPU visibility and capabilities for NVIDIA runtime
       NVIDIA_VISIBLE_DEVICES: "all"
       NVIDIA_DRIVER_CAPABILITIES: "compute,utility"
-      PYTORCH_CUDA_ALLOC_CONF: "expandable_segments:True"
+
+      # HuggingFace transfer acceleration toggle
       HF_HUB_ENABLE_HF_TRANSFER: "0"
+
     command: ["bash", "docker/entrypoints/run_pipeline.sh"]
+
+    # Enable GPU access for pipeline container
     runtime: nvidia
     gpus: all
+
+    # Shared memory can help with model inference / tokenization workloads
     shm_size: "4gb"
+
     volumes:
+      # Persist pipeline state (arXiv progress) across restarts
       - pipeline_state:/app/state
 
 volumes:
+  # Named volume used for pipeline state persistence
   pipeline_state:
-
-services:
-  mysql:
-    image: mysql:8.0
-    container_name: mysql_db
-    restart: always
-    environment:
-      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
-      MYSQL_DATABASE: ${MYSQL_DATABASE}
-      MYSQL_USER: ${MYSQL_USER}
-      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
-    ports:
-      - "3306:3306"
-    volumes:
-      - mysql_data:/var/lib/mysql
-    healthcheck:
-      test: ["CMD-SHELL", "mysqladmin ping -h localhost -u${MYSQL_USER} -p${MYSQL_PASSWORD} --silent"]
-      interval: 10s
-      timeout: 5s
-      retries: 12
-      start_period: 20s
-
-  qdrant:
-    image: qdrant/qdrant:latest
-    container_name: qdrant_db
-    restart: always
-    ports:
-      - "6333:6333"
-      - "6334:6334"
-    volumes:
-      - qdrant_data:/qdrant/storage
-
-  api:
-    build: .
-    container_name: api_service
-    restart: always
-    depends_on:
-      mysql:
-        condition: service_healthy
-      qdrant:
-        condition: service_started 
-    environment:
-      API_HOST: 0.0.0.0
-      API_PORT: 8000
-      GUNICORN_WORKERS: 1
-      GUNICORN_THREADS: 1
-      GUNICORN_TIMEOUT: 120
-      MYSQL_HOST: mysql
-      MYSQL_PORT: 3306
-      MYSQL_DATABASE: ${MYSQL_DATABASE}
-      MYSQL_USER: ${MYSQL_USER}
-      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
-      QDRANT_HOST: qdrant
-      QDRANT_HTTP_PORT: 6333
-      QDRANT_GRPC_PORT: 6334
-    ports:
-      - "8000:8000"
-    command: ["bash", "docker/entrypoints/run_api.sh"]
-    healthcheck:
-      test: ["CMD-SHELL", "curl -fsS http://localhost:8000/ | grep -q '\"status\"'"]
-      interval: 10s
-      timeout: 5s
-      retries: 12
-      start_period: 15s
-
-  pipeline:
-    build: .
-    container_name: pipeline_service
-    restart: on-failure
-    depends_on:
-      mysql:
-        condition: service_healthy
-      qdrant:
-        condition: service_started
-    environment:
-      MYSQL_HOST: mysql
-      MYSQL_PORT: 3306
-      MYSQL_DATABASE: ${MYSQL_DATABASE}
-      MYSQL_USER: ${MYSQL_USER}
-      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
-      QDRANT_HOST: qdrant
-      QDRANT_HTTP_PORT: 6333
-      QDRANT_GRPC_PORT: 6334
-      ARXIV_FIRST_ID: "arXiv:2405.00010"
-      ARXIV_LAST_ID: "arXiv:2512.99999"
-      ARXIV_RATE_LIMIT: "3.0"
-    command: ["bash", "docker/entrypoints/run_pipeline.sh"]
-
-volumes:
-  mysql_data:
-  qdrant_data:

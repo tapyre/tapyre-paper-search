@@ -14,6 +14,29 @@
 
 ---
 
+## 🧠 What is Tapyre?
+
+**Tapyre** is a research infrastructure project designed to make large collections of scientific papers searchable, analyzable, and usable for AI systems.
+
+Modern research datasets contain millions of PDFs that are difficult to search using traditional keyword methods. Tapyre solves this by transforming papers into structured, machine-readable knowledge:
+
+- PDFs are parsed and converted into text  
+- Text is split into semantic chunks  
+- Each chunk is embedded into vector representations  
+- Metadata is stored in a relational database  
+- Vectors are stored in a high-performance vector database  
+
+This allows developers, researchers, and AI systems to:
+
+- perform semantic search across papers  
+- find meaning, not just keywords  
+- build RAG systems (Retrieval-Augmented Generation)  
+- analyze scientific trends at scale  
+- create intelligent research assistants  
+
+**In short:** Tapyre turns raw scientific PDFs into a searchable AI knowledge base.
+
+
 ## 🌟 Highlights
 
 - **PDF conversion & chunking**  
